@@ -121,3 +121,20 @@ export const getInstancePublic = () => {
     method: 'get',
   })
 }
+
+// 根据规格匹配可用算力节点
+// @Tags Instance
+// @Summary 根据规格匹配可用算力节点
+// @Security ApiKeyAuth
+// @Accept application/json
+// @Produce application/json
+// @Param specId query number true "产品规格ID"
+// @Success 200 {object} response.Response{data=array,msg=string} "获取成功"
+// @Router /inst/getMatchedComputeNodes [get]
+export const getMatchedComputeNodes = (params) => {
+  return service({
+    url: '/inst/getMatchedComputeNodes',
+    method: 'get',
+    params
+  })
+}

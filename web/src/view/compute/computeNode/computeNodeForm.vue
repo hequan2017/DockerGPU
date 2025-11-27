@@ -49,13 +49,13 @@
     <el-switch v-model="formData.useTLS" active-color="#13ce66" inactive-color="#ff4949" active-text="是" inactive-text="否" clearable ></el-switch>
 </el-form-item>
         <el-form-item label="CA证书:" prop="caCert">
-    <RichEdit v-model="formData.caCert"/>
+    <el-input v-model="formData.caCert" type="textarea" :autosize="{ minRows: 4 }" placeholder="请输入CA证书(PEM)" />
 </el-form-item>
         <el-form-item label="客户端证书:" prop="clientCert">
-    <RichEdit v-model="formData.clientCert"/>
+    <el-input v-model="formData.clientCert" type="textarea" :autosize="{ minRows: 4 }" placeholder="请输入客户端证书(PEM)" />
 </el-form-item>
         <el-form-item label="客户端私钥:" prop="clientKey">
-    <RichEdit v-model="formData.clientKey"/>
+    <el-input v-model="formData.clientKey" type="textarea" :autosize="{ minRows: 4 }" placeholder="请输入客户端私钥(PEM)" />
 </el-form-item>
         <el-form-item label="是否上架:" prop="shelfStatus">
     <el-switch v-model="formData.shelfStatus" active-color="#13ce66" inactive-color="#ff4949" active-text="是" inactive-text="否" clearable ></el-switch>
@@ -88,8 +88,6 @@ import { getDictFunc } from '@/utils/format'
 import { useRoute, useRouter } from "vue-router"
 import { ElMessage } from 'element-plus'
 import { ref, reactive } from 'vue'
-// 富文本组件
-import RichEdit from '@/components/richtext/rich-edit.vue'
 
 
 const route = useRoute()

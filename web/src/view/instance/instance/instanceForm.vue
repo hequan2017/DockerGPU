@@ -9,7 +9,7 @@
     </el-select>
 </el-form-item>
         <el-form-item label="来源服务器ID:" prop="serverId">
-    <el-select v-model="formData.serverId" placeholder="请选择来源服务器ID" filterable style="width:100%" :clearable="false">
+    <el-select v-model="formData.serverId" :placeholder="formData.templateId ? '请选择来源服务器ID' : '请先选择来源模版ID'" filterable style="width:100%" :clearable="false" :disabled="!formData.templateId">
         <el-option v-for="(item,key) in dataSource.serverId" :key="key" :label="item.label" :value="item.value" />
     </el-select>
 </el-form-item>

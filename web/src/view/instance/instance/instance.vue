@@ -109,7 +109,7 @@
 </el-table-column>
             <el-table-column align="left" label="模版" prop="templateId" width="120">
     <template #default="scope">
-        <span>{{ filterDataSource(dataSource.templateId,scope.row.templateId) }}</span>
+        <span>{{ getTemplateName(scope.row.templateId) }}</span>
     </template>
 </el-table-column>
             <el-table-column align="left" label="镜像" prop="imageId" width="120">
@@ -159,8 +159,8 @@
 
           <el-form :model="formData" label-position="top" ref="elFormRef" :rules="rule" label-width="80px">
             <el-form-item label="节点:" prop="serverId">
-    <el-select v-model="formData.serverId" placeholder="请选择节点" filterable style="width:100%" :clearable="false">
-        <el-option v-for="(item,key) in dataSource.serverId" :key="key" :label="item.label" :value="item.value" />
+    <el-select v-model="formData.serverId" :placeholder="formData.templateId ? '请选择节点' : '请先选择模版'" filterable style="width:100%" :clearable="false" :disabled="!formData.templateId">
+        <el-option v-for="(item,key) in serverOptionsForForm" :key="key" :label="item.label" :value="item.value" />
     </el-select>
 </el-form-item>
             <el-form-item label="模版:" prop="templateId">
@@ -227,19 +227,20 @@
 
 <script setup>
 import {
-    getInstanceDataSource,
+  getInstanceDataSource,
   createInstance,
   deleteInstance,
   deleteInstanceByIds,
   updateInstance,
   findInstance,
-  getInstanceList
+  getInstanceList,
+  getMatchedComputeNodes
 } from '@/api/instance/instance'
 
 // 全量引入格式化工具 请按需保留
 import { getDictFunc, formatDate, formatBoolean, filterDict ,filterDataSource, returnArrImg, onDownloadFile } from '@/utils/format'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ref, reactive } from 'vue'
+import { ref, reactive, watch } from 'vue'
 import { useAppStore } from "@/pinia"
 
 // 导出组件
@@ -271,10 +272,12 @@ const formData = ref({
             remark: '',
         })
   const dataSource = ref([])
+  const serverOptionsForForm = ref([])
   const getDataSourceFunc = async()=>{
     const res = await getInstanceDataSource()
     if (res.code === 0) {
       dataSource.value = res.data
+      serverOptionsForForm.value = []
     }
   }
   getDataSourceFunc()
@@ -283,6 +286,10 @@ const formData = ref({
 
 // 验证规则
 const rule = reactive({
+  serverId: [{ required: true, message: '请选择节点', trigger: ['change','blur'] }],
+  templateId: [{ required: true, message: '请选择模版', trigger: ['change','blur'] }],
+  imageId: [{ required: true, message: '请选择镜像', trigger: ['change','blur'] }],
+  name: [{ required: true, message: '请输入实例名称', trigger: ['input','blur'] }]
 })
 
 const elFormRef = ref()
@@ -350,6 +357,13 @@ const multipleSelection = ref([])
 // 多选
 const handleSelectionChange = (val) => {
     multipleSelection.value = val
+}
+
+const getTemplateName = (id) => {
+  const label = filterDataSource(dataSource.value.templateId, id)
+  if (!label) return ''
+  const idx = label.indexOf(' | ')
+  return idx === -1 ? label : label.slice(0, idx)
 }
 
 // 删除行
@@ -445,6 +459,7 @@ const closeDialog = () => {
         status: null,
         remark: '',
         }
+    serverOptionsForForm.value = []
 }
 // 弹窗确定
 const enterDialog = async () => {
@@ -474,6 +489,15 @@ const enterDialog = async () => {
               }
       })
 }
+
+// 当选择规格变化时，匹配可用算力节点
+watch(() => formData.value.templateId, async (val) => {
+  if (!val) return
+  const res = await getMatchedComputeNodes({ specId: val })
+  if (res.code === 0) {
+    serverOptionsForForm.value = Array.isArray(res.data) ? res.data : []
+  }
+})
 
 const detailForm = ref({})
 
