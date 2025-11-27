@@ -11,12 +11,14 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
+    "time"
 
-	"github.com/flipped-aurora/gin-vue-admin/server/global"
-	"github.com/flipped-aurora/gin-vue-admin/server/model/compute"
-	"github.com/flipped-aurora/gin-vue-admin/server/model/instance"
-	instanceReq "github.com/flipped-aurora/gin-vue-admin/server/model/instance/request"
+    "github.com/docker/docker/api/types"
+    "github.com/docker/docker/client"
+    "github.com/flipped-aurora/gin-vue-admin/server/global"
+    "github.com/flipped-aurora/gin-vue-admin/server/model/compute"
+    "github.com/flipped-aurora/gin-vue-admin/server/model/instance"
+    instanceReq "github.com/flipped-aurora/gin-vue-admin/server/model/instance/request"
 )
 
 type InstanceService struct{}
@@ -487,6 +489,97 @@ func dockerExecRun(endpoint string, useTLS bool, ca, cert, key, containerID stri
 	return string(out), nil
 }
 
+func dockerInspectStatus(endpoint string, useTLS bool, ca, cert, key, containerID string) (string, error) {
+    if endpoint == "" || containerID == "" {
+        return "", fmt.Errorf("缺少Docker端点或容器ID")
+    }
+    base := normalizeDockerEndpoint(endpoint, useTLS)
+    client := buildHTTPClient(useTLS, ca, cert, key)
+    url := fmt.Sprintf("%s/containers/%s/json", base, url.PathEscape(containerID))
+    req, _ := http.NewRequest("GET", url, nil)
+    resp, err := client.Do(req)
+    if err != nil {
+        return "", err
+    }
+    defer resp.Body.Close()
+    if resp.StatusCode >= 300 {
+        b, _ := io.ReadAll(resp.Body)
+        return "", fmt.Errorf("docker inspect failed: %s - %s", resp.Status, string(b))
+    }
+    var obj struct {
+        State struct {
+            Status string `json:"Status"`
+        } `json:"State"`
+    }
+    if err := json.NewDecoder(resp.Body).Decode(&obj); err != nil {
+        return "", err
+    }
+    return obj.State.Status, nil
+}
+
+func newDockerCLI(endpoint string, useTLS bool, ca, cert, key string) (*client.Client, error) {
+    base := normalizeDockerEndpoint(endpoint, useTLS)
+    tr := &http.Transport{}
+    if useTLS {
+        pool := x509.NewCertPool()
+        if ca != "" {
+            _ = pool.AppendCertsFromPEM([]byte(ca))
+        }
+        var certs []tls.Certificate
+        if cert != "" && key != "" {
+            pair, err := tls.X509KeyPair([]byte(cert), []byte(key))
+            if err != nil {
+                return nil, err
+            }
+            certs = append(certs, pair)
+        }
+        tr.TLSClientConfig = &tls.Config{RootCAs: pool, Certificates: certs, MinVersion: tls.VersionTLS12}
+    }
+    httpClient := &http.Client{Transport: tr}
+    return client.NewClientWithOpts(client.WithHost(base), client.WithHTTPClient(httpClient), client.WithAPIVersionNegotiation())
+}
+
+func dockerExecTTYAttach(ctx context.Context, cli *client.Client, containerID string, shell string) (*types.HijackedResponse, error) {
+    cfg := types.ExecConfig{AttachStdin: true, AttachStdout: true, AttachStderr: true, Tty: true, Cmd: []string{shell}}
+    created, err := cli.ContainerExecCreate(ctx, containerID, cfg)
+    if err != nil {
+        return nil, err
+    }
+    hr, err := cli.ContainerExecAttach(ctx, created.ID, types.ExecStartCheck{Tty: true})
+    if err != nil {
+        return nil, err
+    }
+    return &hr, nil
+}
+
+func (instService *InstanceService) OpenTerminal(ctx context.Context, ID string) (*types.HijackedResponse, string, func(), error) {
+    var inst instance.Instance
+    if err := global.GVA_DB.Where("id = ?", ID).First(&inst).Error; err != nil {
+        return nil, "", nil, err
+    }
+    var node compute.ComputeNode
+    if inst.ServerID != nil {
+        _ = global.GVA_DB.Where("id = ?", *inst.ServerID).First(&node).Error
+    }
+    cli, err := newDockerCLI(valueOrString(node.DockerEndpoint), valueOrBool(node.UseTLS), valueOrString(node.CACert), valueOrString(node.ClientCert), valueOrString(node.ClientKey))
+    if err != nil {
+        return nil, "", nil, err
+    }
+    containerID := valueOrString(inst.ContainerID)
+    shell := "/bin/bash"
+    hr, err := dockerExecTTYAttach(ctx, cli, containerID, shell)
+    if err != nil {
+        shell = "/bin/sh"
+        hr, err = dockerExecTTYAttach(ctx, cli, containerID, shell)
+        if err != nil {
+            _ = cli.Close()
+            return nil, "", nil, err
+        }
+    }
+    closer := func() { hr.Close(); _ = cli.Close() }
+    return hr, shell, closer, nil
+}
+
 func buildHTTPClient(useTLS bool, ca, cert, key string) *http.Client {
 	if !useTLS {
 		return &http.Client{Timeout: 60 * time.Second}
@@ -639,8 +732,26 @@ func (instService *InstanceService) GetInstanceInfoList(ctx context.Context, inf
 		db = db.Limit(limit).Offset(offset)
 	}
 
-	err = db.Find(&insts).Error
-	return insts, total, err
+    err = db.Find(&insts).Error
+    if err != nil {
+        return insts, total, err
+    }
+    for i := range insts {
+        var node compute.ComputeNode
+        if insts[i].ServerID == nil || insts[i].ContainerID == nil || valueOrString(insts[i].ContainerID) == "" {
+            continue
+        }
+        _ = global.GVA_DB.Where("id = ?", *insts[i].ServerID).First(&node).Error
+        status, serr := dockerInspectStatus(valueOrString(node.DockerEndpoint), valueOrBool(node.UseTLS), valueOrString(node.CACert), valueOrString(node.ClientCert), valueOrString(node.ClientKey), valueOrString(insts[i].ContainerID))
+        if serr != nil {
+            continue
+        }
+        if status != insts[i].Status {
+            insts[i].Status = status
+            _ = global.GVA_DB.Model(&instance.Instance{}).Where("id = ?", insts[i].ID).Update("status", status).Error
+        }
+    }
+    return insts, total, nil
 }
 func (instService *InstanceService) GetInstanceDataSource(ctx context.Context) (res map[string][]map[string]any, err error) {
 	res = make(map[string][]map[string]any)
@@ -885,7 +996,15 @@ func (instService *InstanceService) RestartContainer(ctx context.Context, ID str
 	if inst.ServerID != nil {
 		_ = global.GVA_DB.Where("id = ?", *inst.ServerID).First(&node).Error
 	}
-	return dockerRestartContainer(valueOrString(node.DockerEndpoint), valueOrBool(node.UseTLS), valueOrString(node.CACert), valueOrString(node.ClientCert), valueOrString(node.ClientKey), valueOrString(inst.ContainerID))
+    if err = dockerRestartContainer(valueOrString(node.DockerEndpoint), valueOrBool(node.UseTLS), valueOrString(node.CACert), valueOrString(node.ClientCert), valueOrString(node.ClientKey), valueOrString(inst.ContainerID)); err != nil {
+        return err
+    }
+    status, _ := dockerInspectStatus(valueOrString(node.DockerEndpoint), valueOrBool(node.UseTLS), valueOrString(node.CACert), valueOrString(node.ClientCert), valueOrString(node.ClientKey), valueOrString(inst.ContainerID))
+    if status == "" {
+        status = "running"
+    }
+    _ = global.GVA_DB.Model(&instance.Instance{}).Where("id = ?", inst.ID).Update("status", status).Error
+    return nil
 }
 
 // StopContainer 关闭实例对应容器
@@ -898,7 +1017,15 @@ func (instService *InstanceService) StopContainer(ctx context.Context, ID string
 	if inst.ServerID != nil {
 		_ = global.GVA_DB.Where("id = ?", *inst.ServerID).First(&node).Error
 	}
-	return dockerStopContainer(valueOrString(node.DockerEndpoint), valueOrBool(node.UseTLS), valueOrString(node.CACert), valueOrString(node.ClientCert), valueOrString(node.ClientKey), valueOrString(inst.ContainerID))
+    if err = dockerStopContainer(valueOrString(node.DockerEndpoint), valueOrBool(node.UseTLS), valueOrString(node.CACert), valueOrString(node.ClientCert), valueOrString(node.ClientKey), valueOrString(inst.ContainerID)); err != nil {
+        return err
+    }
+    status, _ := dockerInspectStatus(valueOrString(node.DockerEndpoint), valueOrBool(node.UseTLS), valueOrString(node.CACert), valueOrString(node.ClientCert), valueOrString(node.ClientKey), valueOrString(inst.ContainerID))
+    if status == "" {
+        status = "exited"
+    }
+    _ = global.GVA_DB.Model(&instance.Instance{}).Where("id = ?", inst.ID).Update("status", status).Error
+    return nil
 }
 
 // GetContainerLogs 查看容器日志

@@ -138,3 +138,37 @@ export const getMatchedComputeNodes = (params) => {
     params
   })
 }
+
+export const restartContainer = (params) => {
+  return service({
+    url: '/inst/restartContainer',
+    method: 'post',
+    params
+  })
+}
+
+export const stopContainer = (params) => {
+  return service({
+    url: '/inst/stopContainer',
+    method: 'post',
+    params
+  })
+}
+
+export const getContainerLogs = (params) => {
+  return service({
+    url: '/inst/getContainerLogs',
+    method: 'get',
+    params,
+    responseType: 'text',
+    headers: { Accept: 'text/plain' }
+  })
+}
+
+export const execContainerCmd = (data) => {
+  return service({
+    url: '/inst/execContainerCmd',
+    method: 'post',
+    data
+  })
+}

@@ -131,6 +131,10 @@
             <el-button  type="primary" link class="table-button" @click="getDetails(scope.row)"><el-icon style="margin-right: 5px"><InfoFilled /></el-icon>查看</el-button>
             <el-button  type="primary" link icon="edit" class="table-button" @click="updateInstanceFunc(scope.row)">编辑</el-button>
             <el-button   type="primary" link icon="delete" @click="deleteRow(scope.row)">删除</el-button>
+            <el-button  type="primary" link @click="onRestart(scope.row)">重启</el-button>
+            <el-button  type="danger" link @click="onStop(scope.row)">关闭</el-button>
+            <el-button  type="primary" link @click="onLogs(scope.row)">日志</el-button>
+            <el-button  type="primary" link @click="onTerminal(scope.row)">终端</el-button>
             </template>
         </el-table-column>
         </el-table>
@@ -222,6 +226,16 @@
             </el-descriptions>
         </el-drawer>
 
+    <el-dialog v-model="logsVisible" width="60%" :close-on-click-modal="false" title="容器日志">
+      <pre style="max-height:50vh;overflow:auto;white-space:pre-wrap">{{ logsText }}</pre>
+    </el-dialog>
+
+    <el-dialog v-model="termVisible" width="70%" :close-on-click-modal="false" title="交互终端">
+      <div style="height:60vh">
+        <XTerm v-if="termVisible" :ws-url="terminalUrl" />
+      </div>
+    </el-dialog>
+
   </div>
 </template>
 
@@ -234,7 +248,11 @@ import {
   updateInstance,
   findInstance,
   getInstanceList,
-  getMatchedComputeNodes
+  getMatchedComputeNodes,
+  restartContainer,
+  stopContainer,
+  getContainerLogs,
+  execContainerCmd
 } from '@/api/instance/instance'
 
 // 全量引入格式化工具 请按需保留
@@ -242,6 +260,8 @@ import { getDictFunc, formatDate, formatBoolean, filterDict ,filterDataSource, r
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ref, reactive, watch } from 'vue'
 import { useAppStore } from "@/pinia"
+import { useUserStore } from '@/pinia/modules/user'
+import XTerm from '@/components/terminal/XTerm.vue'
 
 // 导出组件
 import ExportExcel from '@/components/exportExcel/exportExcel.vue'
@@ -526,6 +546,67 @@ const getDetails = async (row) => {
 const closeDetailShow = () => {
   detailShow.value = false
   detailForm.value = {}
+}
+
+const onRestart = async (row) => {
+  const res = await restartContainer({ ID: row.ID })
+  if (res.code === 0) {
+    ElMessage.success('重启成功')
+    getTableData()
+  }
+}
+
+const onStop = async (row) => {
+  const res = await stopContainer({ ID: row.ID })
+  if (res.code === 0) {
+    ElMessage.success('关闭成功')
+    getTableData()
+  }
+}
+
+const logsVisible = ref(false)
+const logsTail = ref(100)
+const logsText = ref('')
+let logsInstId = ''
+const onLogs = async (row) => {
+  logsInstId = row.ID
+  logsVisible.value = true
+  await fetchLogs()
+}
+const fetchLogs = async () => {
+  if (!logsInstId) return
+  const res = await getContainerLogs({ ID: logsInstId, tail: logsTail.value })
+  if (res?.status === 200) {
+    logsText.value = typeof res.data === 'string' ? res.data : ''
+  }
+}
+
+const logsTimer = ref(null)
+watch(logsVisible, async (v) => {
+  if (v) {
+    logsTail.value = 100
+    await fetchLogs()
+    if (logsTimer.value) clearInterval(logsTimer.value)
+    logsTimer.value = setInterval(fetchLogs, 2000)
+  } else {
+    if (logsTimer.value) clearInterval(logsTimer.value)
+    logsTimer.value = null
+    logsInstId = ''
+  }
+})
+
+const termVisible = ref(false)
+const terminalUrl = ref('')
+const onTerminal = (row) => {
+  const base = import.meta.env.VITE_BASE_API || '/'
+  const origin = window.location.origin
+  const proto = origin.startsWith('https') ? 'wss://' : 'ws://'
+  const host = origin.replace(/^https?:\/\//, '')
+  const userStore = useUserStore()
+  const token = userStore.token
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : ''
+  terminalUrl.value = `${proto}${host}${base}/inst/terminal?ID=${row.ID}${tokenParam}`
+  termVisible.value = true
 }
 
 

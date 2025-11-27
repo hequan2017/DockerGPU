@@ -3,6 +3,7 @@ package instance
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/flipped-aurora/gin-vue-admin/server/global"
 	"github.com/flipped-aurora/gin-vue-admin/server/model/common/response"
@@ -302,6 +303,14 @@ func (instApi *InstanceApi) ExecContainerCmd(c *gin.Context) {
 func (instApi *InstanceApi) TerminalWS(c *gin.Context) {
 	ctx := c.Request.Context()
 	ID := c.Query("ID")
+	// 支持通过query传入token，便于浏览器WebSocket握手
+	if tok := c.Query("token"); tok != "" {
+		j := utils.NewJWT()
+		if cl, err := j.ParseToken(tok); err == nil {
+			c.Set("claims", &cl)
+			utils.SetToken(c, tok, int(cl.ExpiresAt.Unix()-time.Now().Unix()))
+		}
+	}
 	if ID == "" {
 		c.String(http.StatusBadRequest, "缺少实例ID")
 		return
@@ -319,33 +328,45 @@ func (instApi *InstanceApi) TerminalWS(c *gin.Context) {
 			return
 		}
 	}
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
 	}
 	defer conn.Close()
-	for {
-		mt, msg, err := conn.ReadMessage()
-		if err != nil {
-			break
-		}
-		if mt != websocket.TextMessage {
-			continue
-		}
-		cmdStr := string(msg)
-		if cmdStr == "exit" {
-			break
-		}
-		out, err := instService.ExecContainerCmd(ctx, ID, []string{"/bin/sh", "-c", cmdStr})
-		if err != nil {
-			_ = conn.WriteMessage(websocket.TextMessage, []byte("ERROR: "+err.Error()))
-			continue
-		}
-		_ = conn.WriteMessage(websocket.TextMessage, []byte(out))
+	hr, shell, closer, err := instService.OpenTerminal(ctx, ID)
+	if err != nil {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte("ERROR: "+err.Error()+"\n"))
+		return
 	}
+	_ = conn.WriteMessage(websocket.TextMessage, []byte("Connected with "+shell+". Type exit to quit.\n"))
+	done := make(chan struct{})
+	go func() {
+		defer func() { close(done) }()
+		buf := make([]byte, 8192)
+		for {
+			n, er := hr.Reader.Read(buf)
+			if n > 0 {
+				_ = conn.WriteMessage(websocket.BinaryMessage, buf[:n])
+			}
+			if er != nil {
+				return
+			}
+		}
+	}()
+	for {
+		mt, msg, er := conn.ReadMessage()
+		if er != nil {
+			break
+		}
+		if mt == websocket.TextMessage || mt == websocket.BinaryMessage {
+			if string(msg) == "exit" {
+				break
+			}
+			_, _ = hr.Conn.Write(msg)
+		}
+	}
+	closer()
 }
 
 // UpdateInstance 更新实例管理

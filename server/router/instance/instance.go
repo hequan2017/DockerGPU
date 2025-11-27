@@ -19,8 +19,9 @@ func (s *InstanceRouter) InitInstanceRouter(Router *gin.RouterGroup, PublicRoute
 		instRouter.PUT("updateInstance", instApi.UpdateInstance)              // 更新实例管理
 		instRouter.POST("restartContainer", instApi.RestartContainer)         // 重启容器
 		instRouter.POST("stopContainer", instApi.StopContainer)               // 关闭容器
-		instRouter.POST("execContainerCmd", instApi.ExecContainerCmd)         // 容器内执行命令
-		instRouterWithoutRecord.GET("terminal", instApi.TerminalWS)           // 交互式终端（WebSocket）
+        instRouter.POST("execContainerCmd", instApi.ExecContainerCmd)         // 容器内执行命令
+        // WebSocket 终端使用 PublicRouter + 自行鉴权，避免浏览器无法设置自定义Header
+        instRouterWithoutAuth.GET("terminal", instApi.TerminalWS)             // 交互式终端（WebSocket）
 	}
 	{
 		instRouterWithoutRecord.GET("findInstance", instApi.FindInstance)                     // 根据ID获取实例管理
