@@ -76,7 +76,8 @@ Docker容器        后端创建后自动回填
 提交创建后，去对应的  算力节点 获取docker连接信息，然后 创建对应的容器  通过docker api 创建。 并在实例创建成功后回填 containerId 与状态。
 
 需要根据创建实例的模板，去配置容器 对应的参数 
- CPU --cpus=2   内存  --memory=4g  系统盘  --storage-opt overlay2.size=20G  容量盘  命名卷映射到 "/data"   显卡数量 --gpus 1
+ CPU --cpus=2   内存  --memory=4g  系统盘  --storage-opt overlay2.size=20G  容量盘  命名卷映射到 "/data"   显卡数量 --gpus 1 
+ 如果不支持 --storage-opt overlay2.size=20G ，就跳过这个参数，重试。
 必须确保这些配置参数能准确转换为 Docker API 的对应参数。
 删除容器的时候，会自动把挂载的数据卷 一起删除。
 
